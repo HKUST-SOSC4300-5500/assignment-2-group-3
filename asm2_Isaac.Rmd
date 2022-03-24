@@ -1,0 +1,101 @@
+---
+title: "Asm 2"
+author: "Lee Che Yuet Isaac"
+date: "3/24/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##set up
+```{r, include=FALSE}
+rm(list=ls())
+
+# required packages
+packages <- c('dplyr', 'readr', 'tm', 'SnowballC', 'caTools', 'tidyverse', 'caret', 'randomForest')
+
+# install any packages that are not yet installed
+installed_packages <- packages %in% rownames(installed.packages())
+if (any(installed_packages == FALSE)) {
+  install.packages(packages[!installed_packages])
+}
+
+# load required packages
+invisible(lapply(packages, library, character.only = TRUE))
+
+# load the dataset
+t1 <- read_csv("game_train.csv")
+glimpse(t1)  
+```
+
+##Create text corpus
+```{r}
+corpus = VCorpus(VectorSource(t1$user_review))
+corpus[[1]][1]
+t1$user_suggestion[1]
+```
+
+## Conversion to lowercase
+```{r}
+corpus <- tm_map(corpus, PlainTextDocument)
+corpus = tm_map(corpus, content_transformer(tolower))
+corpus[[1]][1]
+```
+
+##Remove punctuation
+```{r}
+corpus = tm_map(corpus, removePunctuation)
+corpus[[1]][1]
+```
+
+##Remove stopwards
+```{r}
+corpus = tm_map(corpus, removeWords, stopwords("english"))
+corpus[[1]][1]  
+```
+
+##Stemming
+```{r}
+corpus = tm_map(corpus, stemDocument)
+corpus[[1]][1]  
+```
+
+##Create Document Term Matrix
+```{r}
+frequencies = DocumentTermMatrix(corpus)
+
+#removes sparse terms(0)
+sparse = removeSparseTerms(frequencies, 0.995)
+
+#covert to data frame
+tSparse = as.data.frame(as.matrix(sparse))
+colnames(tSparse) = make.names(colnames(tSparse))
+
+#adds the dependent variable
+tSparse$user_suggestion = t1$user_suggestion
+
+#calculate the proportion of target variable
+prop.table(table(tSparse$user_suggestion))
+```
+
+#create Repeated K-fold cross-validation
+```{r}
+set.seed(100)
+
+# K = 10, repetition = 3
+train_control <- trainControl(method = "repeatedcv", number = 10, repeats = 3 )
+
+tSparse$user_suggestion = as.factor(tSparse$user_suggestion)
+
+```
+
+#create random forest model
+```{r}
+RF_model = randomForest(user_suggestion ~., data = tSparse, trControl = train_control)
+
+print(RF_model)
+```
+
