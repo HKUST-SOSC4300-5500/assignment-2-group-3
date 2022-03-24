@@ -10,17 +10,178 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
+##set up
+```{r, include=FALSE}
+rm(list=ls())
 
-```{r cars}
-summary(cars)
+# required packages
+packages <- c('dplyr', 'readr', 'tm', 'SnowballC', 'caTools', 'tidyverse', 'caret', 'randomForest', 'MLmetrics','xgboost','tidyverse', 'tidymodels', 'tidytext', 'discrim','naivebayes', "textrecipes")
+
+# install any packages that are not yet installed
+installed_packages <- packages %in% rownames(installed.packages())
+if (any(installed_packages == FALSE)) {
+  install.packages(packages[!installed_packages])
+}
+
+# load required packages
+invisible(lapply(packages, library, character.only = TRUE))
+
+# load the dataset
+t1 <- read_csv("game_train.csv")
+glimpse(t1)  
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=T}
-plot(pressure)
+##Create text corpus
+```{r}
+corpus = VCorpus(VectorSource(t1$user_review))
+corpus[[1]][1]
+t1$user_suggestion[1]
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## Conversion to lowercase
+```{r}
+corpus <- tm_map(corpus, PlainTextDocument)
+corpus = tm_map(corpus, content_transformer(tolower))
+corpus[[1]][1]
+```
+
+##Remove punctuation
+```{r}
+corpus = tm_map(corpus, removePunctuation)
+corpus[[1]][1]
+```
+
+##Remove stopwards
+```{r}
+corpus = tm_map(corpus, removeWords, stopwords("english"))
+corpus[[1]][1]  
+```
+
+##Stemming
+```{r}
+corpus = tm_map(corpus, stemDocument)
+corpus[[1]][1]  
+```
+
+##Create Document Term Matrix
+```{r}
+frequencies = DocumentTermMatrix(corpus)
+
+#removes sparse terms(0)
+sparse = removeSparseTerms(frequencies, 0.995)
+
+#covert to data frame
+tSparse = as.data.frame(as.matrix(sparse))
+colnames(tSparse) = make.names(colnames(tSparse))
+
+#adds the dependent variable
+tSparse$user_suggestion = t1$user_suggestion
+
+#calculate the proportion of target variable
+prop.table(table(tSparse$user_suggestion))
+```
+
+#create Repeated K-fold cross-validation
+```{r}
+set.seed(100)
+
+# K = 3, repetition = 3
+train_control <- trainControl(method = "repeatedcv", number = 3, repeats = 3 )
+
+tSparse$user_suggestion = as.factor(tSparse$user_suggestion)
+
+```
+
+#create random forest model
+```{r}
+RF_model = randomForest(user_suggestion ~., data = tSparse, trControl = train_control)
+
+print(RF_model)
+```
+
+##Confusion Matrix
+```{r}
+confusionMatrix(RF_model$predicted, RF_model$y, mode = "everything", positive="1")
+```
+##Optimization of RF
+```{r}
+bestmtry <- tuneRF(tSparse, tSparse$user_suggestion , stepFactor=1.5, improve=1e-5, ntree=500)
+```
+
+##Build XGB model
+```{r}
+split = sample.split(tSparse$user_suggestion, SplitRatio = 0.7)
+trainSparse = subset(tSparse, split==TRUE)
+testSparse = subset(tSparse, split==FALSE)
+
+#using one hot encoding 
+labels <- trainSparse$user_suggestion
+ts_label <- testSparse$user_suggestion
+new_tr <- model.matrix(~.+0,data = trainSparse) 
+new_ts <- model.matrix(~.+0,data = testSparse)
+
+#convert factor to numeric 
+labels <- as.numeric(labels)-1
+ts_label <- as.numeric(ts_label)-1
+
+dtrain <- xgb.DMatrix(data = trainSparse,label = labels) 
+dtest <- xgb.DMatrix(data = testSparse,label=ts_label)
+
+```
+
+##Build Naive Bayer model
+```{r}
+split = sample.split(t1$user_suggestion, SplitRatio = 0.7)
+train = subset(t1, split==TRUE)
+test = subset(t1, split==FALSE)
+
+train$user_suggestion = as.factor(train$user_suggestion)
+test$user_suggestion = as.factor(test$user_suggestion)
+
+train_rec <- recipe(user_suggestion~. , data = t1)
+
+train_rec <- train_rec %>%
+  step_tokenize(user_review) %>%
+  step_stopwords(user_review) %>%
+  step_tokenfilter(user_review, max_tokens = 500) %>%
+  step_tfidf(user_review)
+
+nb_spec <- naive_Bayes() %>%
+  set_mode("classification") %>%
+  set_engine("naivebayes")
+
+nb_spec
+
+nb_wf <- workflow() %>%
+  add_recipe(train_rec) %>%
+  add_model(nb_spec)
+nb_wf
+
+nb_wf %>%
+  fit(data = train)
+```
+
+```{r}
+train_folds <- vfold_cv(data = train, strata = user_suggestion)
+train_folds
+```
+```{r}
+nb_cv <- nb_wf %>%
+  fit_resamples(
+    train_folds,
+    control = control_resamples(save_pred = TRUE)
+  )
+
+nb_cv_metrics <- collect_metrics(nb_cv)
+nb_cv_predictions <- collect_predictions(nb_cv)
+
+nb_cv_metrics
+```
+##Confusion Matrix
+```{r}
+
+nb_train_predict <- predict(nb_cv, test)
+
+cfm <- confusionMatrix(nb_train_predict, test$user_suggestion, mode = "everything", positive="1")
+
+```
