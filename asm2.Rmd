@@ -12,7 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ##set up
 ```{r, include=FALSE}
-
+memory.limit(size = 4000000)
 # required packages
 packages <- c('dplyr', 'readr', 'tm', 'SnowballC', 'caTools', 'tidyverse', 'caret', 'randomForest', 'MLmetrics','xgboost','tidyverse', 'tidymodels', 'tidytext', 'discrim','naivebayes', "textrecipes", "kernlab", "splitstackshape", "e1071")
 
@@ -108,10 +108,24 @@ test_corpus[[1]][1]
 
 ##Create Document Term Matrix
 ```{r}
-train.dtm <- as.matrix(DocumentTermMatrix(corpus,control=list(wordLengths=c(1,Inf))))
+gc()
+memory.limit(size = 4000000000)
 
-test.dtm <- as.matrix(DocumentTermMatrix(test_corpus,control=list(wordLengths=c(1,Inf))))
+frequencies = DocumentTermMatrix(corpus)
 
+#removes sparse terms(0)
+sparse = removeSparseTerms(frequencies, 0.995)
+
+frequencies_test = DocumentTermMatrix(test_corpus)
+
+#removes sparse terms(0)
+test_sparse = removeSparseTerms(frequencies, 0.995)
+
+#train.dtm <- DocumentTermMatrix(corpus,control=list(wordLengths=c(1,Inf)))
+train.dtm <- as.matrix(frequencies)
+
+#test.dtm <- DocumentTermMatrix(test_corpus,control=list(wordLengths=c(1,Inf)))
+test.dtm <- as.matrix(test_sparse)
 # #removes sparse terms(0)
 # train.dtm = removeSparseTerms(test.dtm, 0.995)
 # train.dtm = removeSparseTerms(test.dtm, 0.995)
