@@ -1,0 +1,210 @@
+---
+title: "Asm 2"
+author: "Lee Che Yuet Isaac"
+date: "3/24/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## set up
+```{r, include=FALSE}
+memory.limit(size = 4000000)
+# required packages
+packages <- c('dplyr','tidyverse', 'tidymodels', 'tidytext', 'discrim','naivebayes', "textrecipes", "kernlab", "splitstackshape", "e1071", "glmnet")
+
+# install any packages that are not yet installed
+installed_packages <- packages %in% rownames(installed.packages())
+if (any(installed_packages == FALSE)) {
+  install.packages(packages[!installed_packages])
+}
+
+# load required packages
+invisible(lapply(packages, library, character.only = TRUE))
+
+
+# load the dataset
+t1 <- read_csv("game_train.csv")
+glimpse(t1)  
+game_test <- read.csv("game_test.csv")
+names(t1)
+
+t1$user_suggestion = as.factor(t1$user_suggestion)
+```
+
+## Create recipe
+```{r}
+suggestion_rec <- recipe(user_suggestion ~ user_review, data = t1)
+
+suggestion_rec <- suggestion_rec %>%
+  step_tokenize(user_review) %>%
+  step_tokenfilter(user_review, max_tokens = 1e3) %>%
+  step_tfidf(user_review)
+
+# Create workflow
+suggestion_wf <-workflow() %>%
+  add_recipe(suggestion_rec)
+
+
+```
+
+## Create naive bayes model
+```{r}
+nb_spec <- naive_Bayes() %>%
+  set_mode("classification") %>%
+  set_engine("naivebayes")
+
+nb_spec
+
+nb_fit <- suggestion_wf %>%
+  add_model(nb_spec) %>%
+  fit(data = t1)
+```
+#create cross-validation
+```{r}
+set.seed(100)
+
+suggestion_folds <- vfold_cv(t1)
+
+suggestion_folds
+
+```
+
+```{r}
+nb_wf <- workflow() %>%
+  add_recipe(suggestion_rec) %>%
+  add_model(nb_spec)
+
+nb_wf
+```
+```{r}
+nb_rs <- fit_resamples(
+  nb_wf,
+  suggestion_folds,
+  control = control_resamples(save_pred = TRUE)
+)
+nb_rs
+```
+
+
+```{r}
+nb_rs_metrics <- collect_metrics(nb_rs)
+nb_rs_predictions <- collect_predictions(nb_rs)
+
+nb_rs_metrics
+```
+
+
+
+## Create lasso classification
+```{r}
+lasso_spec <- logistic_reg(penalty = 0.01, mixture = 1) %>%
+  set_mode("classification") %>%
+  set_engine("glmnet")
+
+lasso_spec
+```
+```{r}
+lasso_wf <- workflow() %>%
+  add_recipe(suggestion_rec) %>%
+  add_model(lasso_spec)
+
+lasso_wf
+```
+```{r}
+set.seed(2020)
+lasso_rs <- fit_resamples(
+  lasso_wf,
+  suggestion_folds,
+  control = control_resamples(save_pred = TRUE)
+)
+
+lasso_rs
+```
+```{r}
+lasso_rs_metrics <- collect_metrics(lasso_rs)
+lasso_rs_predictions <- collect_predictions(lasso_rs)
+
+lasso_rs_metrics
+```
+## Model tuning
+```{r}
+tune_spec <- logistic_reg(penalty = tune(), mixture = 1) %>%
+  set_mode("classification") %>%
+  set_engine("glmnet")
+
+tune_spec
+```
+```{r}
+lambda_grid <- grid_regular(penalty(), levels = 30)
+lambda_grid
+```
+```{r}
+tune_wf <- workflow() %>%
+  add_recipe(suggestion_rec) %>%
+  add_model(tune_spec)
+
+set.seed(2020)
+tune_rs <- tune_grid(
+  tune_wf,
+  suggestion_folds,
+  grid = lambda_grid,
+  control = control_resamples(save_pred = TRUE)
+)
+
+tune_rs
+```
+
+```{r}
+collect_metrics(tune_rs)
+tune_rs %>%
+  show_best("roc_auc")
+```
+```{r}
+chosen_auc <- tune_rs %>%
+  select_by_one_std_err(metric = "roc_auc", -penalty)
+
+chosen_auc
+```
+```{r}
+final_lasso <- finalize_workflow(tune_wf, chosen_auc)
+
+final_lasso
+```
+```{r}
+fitted_lasso <- fit(final_lasso, t1)
+```
+
+```{r}
+fitted_lasso %>%
+  pull_workflow_fit() %>%
+  tidy() %>%
+  arrange(-estimate)
+```
+
+```{r}
+fitted_lasso %>%
+  pull_workflow_fit() %>%
+  tidy() %>%
+  arrange(estimate)
+```
+```{r}
+prepped_recipe <- prep(suggestion_rec, training = t1)
+
+test_preprocessed <- bake(prepped_recipe, game_test)
+
+test_preprocessed
+
+bestlam = final_lasso$lambda.min
+
+y_predicted <- predict(final_lasso ,s = bestlam, newx = test_preprocessed)
+
+test_fit <- tune_wf %>%
+  fit(data = game_test)
+
+predict(final_lasso, game_test)
+```
+
