@@ -14,7 +14,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r, include=FALSE}
 memory.limit(size = 4000000)
 # required packages
-packages <- c('dplyr','tidyverse', 'tidymodels', 'tidytext', 'discrim','naivebayes', "textrecipes", "kernlab", "splitstackshape", "e1071", "glmnet")
+packages <- c('dplyr','tidyverse', 'tidymodels', 'tidytext', 'discrim','naivebayes', "textrecipes", "kernlab", "splitstackshape", "e1071", "glmnet", "caret")
 
 # install any packages that are not yet installed
 installed_packages <- packages %in% rownames(installed.packages())
@@ -191,20 +191,34 @@ fitted_lasso %>%
   tidy() %>%
   arrange(estimate)
 ```
+
+
+
 ```{r}
-prepped_recipe <- prep(suggestion_rec, training = t1)
+final_model <- fit(final_lasso, t1)
 
-test_preprocessed <- bake(prepped_recipe, game_test)
-
-test_preprocessed
-
-bestlam = final_lasso$lambda.min
-
-y_predicted <- predict(final_lasso ,s = bestlam, newx = test_preprocessed)
-
-test_fit <- tune_wf %>%
-  fit(data = game_test)
-
-predict(final_lasso, game_test)
+prediction_lasso <- predict(final_model, new_data = t1)
 ```
 
+##Confusion Matrix
+```{r}
+y_train <- as.matrix.data.frame(t1$user_suggestion)
+y_pred <- as.matrix.data.frame(prediction_lasso)
+
+y_train <- as.factor(y_train)
+y_pred <- as.factor(y_pred)
+
+confusionMatrix(y_train, y_pred, mode = "everything", positive="1")
+```
+
+##Ouput
+```{r}
+prediction_lasso_test <- predict(final_model, new_data = game_test)
+prediction_lasso_test
+```
+
+
+```{r}
+output= data.frame(review_id = game_test$review_id, user_suggestion = prediction_lasso_test)
+write.csv(output, "predictions.csv_4", row.names = FALSE, quote = F)
+```
