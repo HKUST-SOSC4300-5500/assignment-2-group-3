@@ -112,24 +112,13 @@ gc()
 memory.limit(size = 4000000000)
 
 frequencies = DocumentTermMatrix(corpus)
-
-#removes sparse terms(0)
 sparse = removeSparseTerms(frequencies, 0.995)
 
 frequencies_test = DocumentTermMatrix(test_corpus)
+test_sparse = removeSparseTerms(frequencies_test, 0.995)
 
-#removes sparse terms(0)
-test_sparse = removeSparseTerms(frequencies, 0.995)
-
-#train.dtm <- DocumentTermMatrix(corpus,control=list(wordLengths=c(1,Inf)))
 train.dtm <- as.matrix(frequencies)
-
-#test.dtm <- DocumentTermMatrix(test_corpus,control=list(wordLengths=c(1,Inf)))
 test.dtm <- as.matrix(test_sparse)
-# #removes sparse terms(0)
-# train.dtm = removeSparseTerms(test.dtm, 0.995)
-# train.dtm = removeSparseTerms(test.dtm, 0.995)
-
 
 train.df <- data.frame(train.dtm[,intersect(colnames(train.dtm), colnames(test.dtm))])
 test.df <- data.frame(test.dtm[,intersect(colnames(test.dtm), colnames(train.dtm))])
@@ -150,9 +139,9 @@ train.df$user_suggestion = t1$user_suggestion
 train.df$user_suggestion = factor(train.df$user_suggestion, levels = c(0,1))
 
 
-# 
-# #calculate the proportion of target variable
-# prop.table(table(tSparse$user_suggestion))
+
+#calculate the proportion of target variable
+prop.table(table(train.df$user_suggestion))
 # 
 # split = sample.split(tSparse$user_suggestion, SplitRatio = 0.7)
 # training_set = subset(tSparse, split == TRUE)
@@ -172,6 +161,7 @@ train_control <- trainControl(method = "repeatedcv", number = 3, repeats = 3 )
 
 #create random forest model
 ```{r}
+gc()
 
 RF_model = randomForest( user_suggestion~. ,
                          data = train.df,
@@ -187,14 +177,14 @@ confusionMatrix(RF_model$predicted, RF_model$y, mode = "everything", positive="1
 
 ##Ouput
 ```{r}
-predictRF = predict(RF_model, newdata=game_test_corpus`)
+predictRF = predict(RF_model, newdata=test.df)
 
 
 ```
 
 
 ```{r}
-output= data.frame(review_id = game_test_tSparse$review_id, user_suggestion = predictRF)
+output= data.frame(review_id = game_test$review_id, user_suggestion = predictRF)
 write.csv(output, "predictions.csv", row.names = FALSE, quote = F)
 ```
 
