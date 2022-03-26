@@ -195,7 +195,7 @@ write.csv(output, "predictions.csv", row.names = FALSE, quote = F)
 ```{r}
 
 hyper_grid <- expand.grid(
-  mtry       = seq(20, 40, by = 2),
+  mtry       = seq(0, 60, by = 2),
   node_size  = seq(3, 9, by = 2),
   sampe_size = c(.55, .632, .70, .80),
   OOB_RMSE   = 0
@@ -278,7 +278,19 @@ print(Final_RF_2)
 
 
 ```
+```{r}
+confusionMatrix(Final_RF_2$predicted, Final_RF_2$y, mode = "everything", positive="1")
+```
+##Ouput
+```{r}
+predict_RF_2 = predict(Final_RF_2, newdata=test.df)
+```
 
+
+```{r}
+output= data.frame(review_id = game_test$review_id, user_suggestion = predict_RF_2)
+write.csv(output, "predictions_2.csv", row.names = FALSE, quote = F)
+```
 
 
 
