@@ -14,7 +14,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r, include=FALSE}
 memory.limit(size = 4000000)
 # required packages
-packages <- c('dplyr','tidyverse', 'tidymodels', 'tidytext', 'discrim','naivebayes', "textrecipes", "kernlab", "splitstackshape", "e1071", "glmnet", "caret")
+packages <- c('dplyr','tidyverse', 'tidymodels', 'tidytext', 'discrim','naivebayes', "textrecipes", "kernlab", "splitstackshape", "e1071", "glmnet", "caret", "keras")
 
 # install any packages that are not yet installed
 installed_packages <- packages %in% rownames(installed.packages())
@@ -37,31 +37,36 @@ t1$user_suggestion = as.factor(t1$user_suggestion)
 
 ## Create recipe
 ```{r}
-suggestion_rec <- recipe(user_suggestion ~ user_review, data = t1)
+max_words <- 2e4
+max_length <- 30
 
-suggestion_rec <- suggestion_rec %>%
+review_rec <- recipe(~ user_review, data = t1) %>%
   step_tokenize(user_review) %>%
-  step_tokenfilter(user_review, max_tokens = 1e3) %>%
-  step_tfidf(user_review)
+  step_tokenfilter(user_review, max_tokens = max_words) %>%
+  step_sequence_onehot(user_review, sequence_length = max_length)
 
-# Create workflow
-suggestion_wf <-workflow() %>%
-  add_recipe(suggestion_rec)
+review_rec
+```
+## Prep recipe
+```{r}
+review_prep <- prep(review_rec)
+review_train <- bake(review_prep, new_data = NULL, composition = "matrix")
+dim(review_train)
 
 
 ```
 
-## Create naive bayes model
+## Create Simple flattened dense network
 ```{r}
-nb_spec <- naive_Bayes() %>%
-  set_mode("classification") %>%
-  set_engine("naivebayes")
+dense_model <- keras_model_sequential() %>%
+  layer_embedding(input_dim = max_words + 1,
+                  output_dim = 12,
+                  input_length = max_length) %>%
+  layer_flatten() %>%
+  layer_dense(units = 32, activation = "relu") %>%
+  layer_dense(units = 1, activation = "sigmoid")
 
-nb_spec
-
-nb_fit <- suggestion_wf %>%
-  add_model(nb_spec) %>%
-  fit(data = t1)
+dense_model
 ```
 #create cross-validation
 ```{r}
