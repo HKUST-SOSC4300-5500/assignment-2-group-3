@@ -1,7 +1,7 @@
 ---
-title: "Asm 2"
-author: "Lee Che Yuet Isaac"
-date: "3/24/2022"
+title: "asm2_deep"
+author: "Isaac"
+date: "3/26/2022"
 output: html_document
 ---
 
@@ -227,3 +227,4 @@ prediction_lasso_test %>%
 output= data.frame(review_id = game_test$review_id, user_suggestion = prediction_lasso_test)
 write.csv(output, "predictions_4.csv", row.names = FALSE, quote = F)
 ```
+
