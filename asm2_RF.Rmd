@@ -1,0 +1,366 @@
+---
+title: "Asm 2"
+author: "Lee Che Yuet Isaac"
+date: "3/24/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##set up
+```{r, include=FALSE}
+memory.limit(size = 4000000)
+# required packages
+packages <- c('dplyr', 'readr', 'tm', 'SnowballC', 'caTools', 'tidyverse', 'caret', 'randomForest', 'MLmetrics','xgboost','tidyverse', 'tidymodels', 'tidytext', 'discrim','naivebayes', "textrecipes", "kernlab", "splitstackshape", "e1071","ranger")
+
+# install any packages that are not yet installed
+installed_packages <- packages %in% rownames(installed.packages())
+if (any(installed_packages == FALSE)) {
+  install.packages(packages[!installed_packages])
+}
+
+# load required packages
+invisible(lapply(packages, library, character.only = TRUE))
+
+# load the dataset
+t1 <- read_csv("game_train.csv")
+glimpse(t1)  
+game_test <- read.csv("game_test.csv")
+```
+
+##Create text corpus
+```{r}
+corpus = VCorpus(VectorSource(t1$user_review))
+corpus[[1]][1]
+t1$user_suggestion[1]
+```
+
+## Conversion to lowercase
+```{r}
+corpus <- tm_map(corpus, PlainTextDocument)
+corpus <- tm_map(corpus, content_transformer(stripWhitespace))
+corpus = tm_map(corpus, content_transformer(tolower))
+corpus[[1]][1]
+
+```
+
+##Remove punctuation
+```{r}
+corpus = tm_map(corpus, removePunctuation)
+corpus = tm_map(corpus, removeNumbers)
+corpus[[1]][1]
+
+```
+
+##Remove stopwards
+```{r}
+corpus = tm_map(corpus, removeWords, stopwords("english"))
+corpus[[1]][1]  
+```
+
+##Stemming
+```{r}
+corpus = tm_map(corpus, stemDocument)
+corpus[[1]][1]  
+
+```
+
+##Process the test set
+```{r}
+test_corpus = VCorpus(VectorSource(game_test$user_review))
+test_corpus[[1]][1]
+game_test$user_suggestion[1]
+```
+
+## Conversion to lowercase
+```{r}
+test_corpus <- tm_map(test_corpus, PlainTextDocument)
+test_corpus <- tm_map(test_corpus, content_transformer(stripWhitespace))
+test_corpus = tm_map(test_corpus, content_transformer(tolower))
+test_corpus[[1]][1]
+
+```
+
+##Remove punctuation
+```{r}
+test_corpus = tm_map(test_corpus, removePunctuation)
+test_corpus = tm_map(test_corpus, removeNumbers)
+test_corpus[[1]][1]
+
+```
+
+##Remove stopwards
+```{r}
+test_corpus = tm_map(test_corpus, removeWords, stopwords("english"))
+test_corpus[[1]][1]  
+```
+
+##Stemming
+```{r}
+test_corpus = tm_map(test_corpus, stemDocument)
+test_corpus[[1]][1]  
+
+```
+
+
+##Create Document Term Matrix
+```{r}
+gc()
+memory.limit(size = 4000000000)
+
+frequencies = DocumentTermMatrix(corpus)
+sparse = removeSparseTerms(frequencies, 0.995)
+
+frequencies_test = DocumentTermMatrix(test_corpus)
+test_sparse = removeSparseTerms(frequencies_test, 0.995)
+
+train.dtm <- as.matrix(frequencies)
+test.dtm <- as.matrix(test_sparse)
+
+train.df <- data.frame(train.dtm[,intersect(colnames(train.dtm), colnames(test.dtm))])
+test.df <- data.frame(test.dtm[,intersect(colnames(test.dtm), colnames(train.dtm))])
+
+label.df <- data.frame(row.names(train.df))
+colnames(label.df) <- c("filenames")
+label.df<- cSplit(label.df, 'filenames', sep="_", type.convert=FALSE)
+train.df$corpus<- label.df$filenames_1
+test.df$corpus <- c("Neg")
+
+# #covert to data frame
+# tSparse = as.data.frame(as.matrix(sparse))
+# colnames(tSparse) = make.names(colnames(tSparse))
+# 
+
+#adds the dependent variable
+train.df$user_suggestion = t1$user_suggestion
+train.df$user_suggestion = factor(train.df$user_suggestion, levels = c(0,1))
+
+
+
+#calculate the proportion of target variable
+prop.table(table(train.df$user_suggestion))
+# 
+# split = sample.split(tSparse$user_suggestion, SplitRatio = 0.7)
+# training_set = subset(tSparse, split == TRUE)
+# test_set = subset(tSparse, split == FALSE)
+
+
+```
+
+#create Repeated K-fold cross-validation
+```{r}
+set.seed(100)
+
+# K = 3, repetition = 3
+train_control <- trainControl(method = "repeatedcv", number = 3, repeats = 3 )
+
+```
+
+#create random forest model
+```{r}
+gc()
+
+RF_model = randomForest( user_suggestion~. ,
+                         data = train.df,
+                         trControl = train_control)
+
+print(RF_model)
+```
+
+##Confusion Matrix
+```{r}
+confusionMatrix(RF_model$predicted, RF_model$y, mode = "everything", positive="1")
+```
+
+##Ouput
+```{r}
+predictRF = predict(RF_model, newdata=test.df)
+
+
+```
+
+
+```{r}
+output= data.frame(review_id = game_test$review_id, user_suggestion = predictRF)
+write.csv(output, "predictions.csv", row.names = FALSE, quote = F)
+```
+
+
+
+##Optimization of RF
+
+```{r}
+
+hyper_grid <- expand.grid(
+  mtry       = seq(20, 40, by = 2),
+  node_size  = seq(3, 9, by = 2),
+  sampe_size = c(.55, .632, .70, .80),
+  OOB_RMSE   = 0
+)
+
+# total number of combinations
+nrow(hyper_grid)
+
+```
+
+```{r}
+for(i in 1:nrow(hyper_grid)) {
+  
+  # train model
+  model <- ranger(
+    formula         = user_suggestion~. , 
+    data            = train.df, 
+    num.trees       = 500,
+    mtry            = hyper_grid$mtry[i],
+    min.node.size   = hyper_grid$node_size[i],
+    sample.fraction = hyper_grid$sampe_size[i],
+    seed            = 123
+  )
+  
+  # add OOB error to grid
+  hyper_grid$OOB_RMSE[i] <- sqrt(model$prediction.error)
+}
+
+hyper_grid %>% 
+  dplyr::arrange(OOB_RMSE) %>%
+  head(10)
+```
+
+
+```{r}
+gc()
+
+Final_RF <- ranger(
+    formula         = user_suggestion~. , 
+    data            = train.df, 
+    num.trees       = 500,
+    mtry            = 20,
+    min.node.size   = 7,
+    seed            = 123
+  )
+
+print(Final_RF)
+```
+
+
+```{r}
+confusionMatrix(Final_RF$predictions, RF_model$y, mode = "everything", positive="1")
+```
+##Ouput
+```{r}
+predict_Final_RF = predict(Final_RF, data=test.df ,type = "response")
+
+predict_Final_RF$predictions
+```
+
+
+```{r}
+output= data.frame(review_id = game_test$review_id, user_suggestion = predict_Final_RF$predictions)
+write.csv(output, "predictions_1.csv", row.names = FALSE, quote = F)
+```
+
+```{r}
+gc()
+
+Final_RF_2 <- randomForest(
+    formula         = user_suggestion~. , 
+    data            = train.df, 
+    num.trees       = 500,
+    mtry            = 20,
+    min.node.size   = 7,
+    seed            = 123
+  )
+
+print(Final_RF_2)
+
+
+```
+
+
+
+
+
+
+
+
+
+##Build XGB model
+```{r}
+split = sample.split(tSparse$user_suggestion, SplitRatio = 0.7)
+trainSparse = subset(tSparse, split==TRUE)
+testSparse = subset(tSparse, split==FALSE)
+
+#using one hot encoding 
+labels <- trainSparse$user_suggestion
+ts_label <- testSparse$user_suggestion
+new_tr <- model.matrix(~.+0,data = trainSparse) 
+new_ts <- model.matrix(~.+0,data = testSparse)
+
+#convert factor to numeric 
+labels <- as.numeric(labels)-1
+ts_label <- as.numeric(ts_label)-1
+
+dtrain <- xgb.DMatrix(data = trainSparse,label = labels) 
+dtest <- xgb.DMatrix(data = testSparse,label=ts_label)
+
+```
+
+##Build Naive Bayer model
+```{r}
+split = sample.split(t1$user_suggestion, SplitRatio = 0.7)
+train = subset(t1, split==TRUE)
+test = subset(t1, split==FALSE)
+
+train$user_suggestion = as.factor(train$user_suggestion)
+test$user_suggestion = as.factor(test$user_suggestion)
+
+train_rec <- recipe(user_suggestion~. , data = t1)
+
+train_rec <- train_rec %>%
+  step_tokenize(user_review) %>%
+  step_stopwords(user_review) %>%
+  step_tokenfilter(user_review, max_tokens = 500) %>%
+  step_tfidf(user_review)
+
+nb_spec <- naive_Bayes() %>%
+  set_mode("classification") %>%
+  set_engine("naivebayes")
+
+nb_spec
+
+nb_wf <- workflow() %>%
+  add_recipe(train_rec) %>%
+  add_model(nb_spec)
+nb_wf
+
+nb_wf %>%
+  fit(data = train)
+```
+
+```{r}
+train_folds <- vfold_cv(data = train, strata = user_suggestion)
+train_folds
+```
+```{r}
+nb_cv <- nb_wf %>%
+  fit_resamples(
+    train_folds,
+    control = control_resamples(save_pred = TRUE)
+  )
+
+nb_cv_metrics <- collect_metrics(nb_cv)
+nb_cv_predictions <- collect_predictions(nb_cv)
+
+nb_cv_metrics
+```
+##Confusion Matrix
+```{r}
+
+nb_train_predict <- predict(nb_cv, test)
+
+cfm <- confusionMatrix(nb_train_predict, test$user_suggestion, mode = "everything", positive="1")
+
+```
