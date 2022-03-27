@@ -1,7 +1,7 @@
 ---
-title: "Asm 2"
-author: "Lee Che Yuet Isaac"
-date: "3/24/2022"
+title: "asm2_deep"
+author: "Isaac"
+date: "3/26/2022"
 output: html_document
 ---
 
@@ -14,7 +14,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r, include=FALSE}
 memory.limit(size = 4000000)
 # required packages
-packages <- c('dplyr','tidyverse', 'tidymodels', 'tidytext', 'discrim','naivebayes', "textrecipes", "kernlab", "splitstackshape", "e1071", "glmnet", "caret","hardhat")
+packages <- c('dplyr','tidyverse', 'tidymodels', 'tidytext', 'discrim','naivebayes', "textrecipes", "kernlab", "splitstackshape", "e1071", "glmnet", "caret", "keras")
 
 # install any packages that are not yet installed
 installed_packages <- packages %in% rownames(installed.packages())
@@ -35,42 +35,68 @@ names(t1)
 t1$user_suggestion = as.factor(t1$user_suggestion)
 ```
 
+```{r}
+set.seed(1234)
+t1_split <- t1 %>%
+  filter(nchar(user_review) >= 15) %>%
+  initial_split()
+
+t1_train <- training(t1_split)
+t1_test <- testing(t1_split)
+```
+
+
+
 ## Create recipe
 ```{r}
-suggestion_rec <- recipe(user_suggestion ~ user_review, data = t1)
+max_words <- 2e4
+max_length <- 30
 
-suggestion_rec <- suggestion_rec %>%
+review_rec <- recipe(~ user_review, data = t1) %>%
   step_tokenize(user_review) %>%
-  step_tokenfilter(user_review, max_tokens = 1e3) %>%
-  step_tfidf(user_review)
+  step_tokenfilter(user_review, max_tokens = max_words) %>%
+  step_sequence_onehot(user_review, sequence_length = max_length)
 
-# Create workflow
-suggestion_wf <-workflow() %>%
-  add_recipe(suggestion_rec)
+review_rec
+```
+
+## Prep recipe
+```{r}
+review_prep <- prep(review_rec)
+review_train <- bake(review_prep, new_data = NULL, composition = "matrix")
+dim(review_train)
 
 
 ```
 
-## Create naive bayes model
+## Create LSTM models
 ```{r}
-nb_spec <- naive_Bayes() %>%
-  set_mode("classification") %>%
-  set_engine("naivebayes")
+lstm_mod <- keras_model_sequential() %>%
+  layer_embedding(input_dim = max_words + 1, output_dim = 32) %>%
+  layer_lstm(units = 32) %>%
+  layer_dense(units = 1, activation = "sigmoid")
 
-nb_spec
-
-nb_fit <- suggestion_wf %>%
-  add_model(nb_spec) %>%
-  fit(data = t1)
+lstm_mod
 ```
-
-## Create cross-validation
 ```{r}
-set.seed(100)
+lstm_mod %>%
+  compile(
+    optimizer = "adam",
+    loss = "binary_crossentropy",
+    metrics = c("accuracy")
+  )
 
-suggestion_folds <- vfold_cv(t1)
+lstm_history <- lstm_mod %>%
+  fit(
+    review_train,
+    t1_train$user_suggestion,
+    epochs = 10,
+    validation_split = 0.25,
+    batch_size = 512,
+    verbose = FALSE
+  )
 
-suggestion_folds
+lstm_history
 
 ```
 
@@ -192,43 +218,9 @@ fitted_lasso %>%
   tidy() %>%
   arrange(estimate)
 ```
-```{r}
-sparse_bp <- default_recipe_blueprint(composition = "dgCMatrix")
-
-sparse_wf <- workflow() %>%
-  add_recipe(suggestion_rec, blueprint = sparse_bp) %>%
-  add_model(tune_spec)
-
-sparse_wf
-```
-```{r}
-smaller_lambda <- grid_regular(penalty(range = c(-5, 0)), levels = 20)
-smaller_lambda
-```
-```{r}
-set.seed(2020)
-sparse_rs <- tune_grid(
-  sparse_wf,
-  suggestion_folds,
-  grid = smaller_lambda
-)
-
-sparse_rs
-```
-
-```{r}
-sparse_rs %>%
-  show_best("roc_auc")
-```
 
 
 
-
-
-
-
-
-##Final model
 ```{r}
 final_model <- fit(final_lasso, t1)
 
@@ -262,3 +254,4 @@ prediction_lasso_test %>%
 output= data.frame(review_id = game_test$review_id, user_suggestion = prediction_lasso_test)
 write.csv(output, "predictions_4.csv", row.names = FALSE, quote = F)
 ```
+

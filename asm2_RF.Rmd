@@ -14,7 +14,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r, include=FALSE}
 memory.limit(size = 4000000)
 # required packages
-packages <- c('dplyr', 'readr', 'tm', 'SnowballC', 'caTools', 'tidyverse', 'caret', 'randomForest', 'MLmetrics','xgboost','tidyverse', 'tidymodels', 'tidytext', 'discrim','naivebayes', "textrecipes", "kernlab", "splitstackshape", "e1071","ranger")
+packages <- c('dplyr', 'readr', 'tm', 'SnowballC', 'caTools', 'tidyverse', 'caret', 'randomForest', 'MLmetrics','xgboost','tidyverse', 'tidymodels', 'tidytext', 'discrim','naivebayes', "textrecipes", "kernlab", "splitstackshape", "e1071","ranger","gbm","nnet","rpart")
 
 # install any packages that are not yet installed
 installed_packages <- packages %in% rownames(installed.packages())
@@ -84,7 +84,7 @@ test_corpus[[1]][1]
 
 ```
 
-##Remove punctuation
+## Remove punctuation
 ```{r}
 test_corpus = tm_map(test_corpus, removePunctuation)
 test_corpus = tm_map(test_corpus, removeNumbers)
@@ -92,13 +92,13 @@ test_corpus[[1]][1]
 
 ```
 
-##Remove stopwards
+## Remove stopwards
 ```{r}
 test_corpus = tm_map(test_corpus, removeWords, stopwords("english"))
 test_corpus[[1]][1]  
 ```
 
-##Stemming
+## Stemming
 ```{r}
 test_corpus = tm_map(test_corpus, stemDocument)
 test_corpus[[1]][1]  
@@ -106,7 +106,7 @@ test_corpus[[1]][1]
 ```
 
 
-##Create Document Term Matrix
+## Create Document Term Matrix
 ```{r}
 gc()
 memory.limit(size = 4000000000)
@@ -129,10 +129,6 @@ label.df<- cSplit(label.df, 'filenames', sep="_", type.convert=FALSE)
 train.df$corpus<- label.df$filenames_1
 test.df$corpus <- c("Neg")
 
-# #covert to data frame
-# tSparse = as.data.frame(as.matrix(sparse))
-# colnames(tSparse) = make.names(colnames(tSparse))
-# 
 
 #adds the dependent variable
 train.df$user_suggestion = t1$user_suggestion
@@ -142,15 +138,15 @@ train.df$user_suggestion = factor(train.df$user_suggestion, levels = c(0,1))
 
 #calculate the proportion of target variable
 prop.table(table(train.df$user_suggestion))
-# 
-# split = sample.split(tSparse$user_suggestion, SplitRatio = 0.7)
-# training_set = subset(tSparse, split == TRUE)
-# test_set = subset(tSparse, split == FALSE)
+
+split = sample.split(train.df$user_suggestion, SplitRatio = 0.7)
+training_set = subset(train.df, split == TRUE)
+test_set = subset(train.df, split == FALSE)
 
 
 ```
 
-#create Repeated K-fold cross-validation
+## Create Repeated K-fold cross-validation
 ```{r}
 set.seed(100)
 
@@ -159,7 +155,7 @@ train_control <- trainControl(method = "repeatedcv", number = 3, repeats = 3 )
 
 ```
 
-#create random forest model
+## Create random forest model
 ```{r}
 gc()
 
@@ -170,12 +166,12 @@ RF_model = randomForest( user_suggestion~. ,
 print(RF_model)
 ```
 
-##Confusion Matrix
+## Confusion Matrix
 ```{r}
 confusionMatrix(RF_model$predicted, RF_model$y, mode = "everything", positive="1")
 ```
 
-##Ouput
+## Ouput
 ```{r}
 predictRF = predict(RF_model, newdata=test.df)
 
@@ -190,8 +186,7 @@ write.csv(output, "predictions.csv", row.names = FALSE, quote = F)
 
 
 
-##Optimization of RF
-
+## Optimization of RF
 ```{r}
 
 hyper_grid <- expand.grid(
@@ -205,7 +200,7 @@ hyper_grid <- expand.grid(
 nrow(hyper_grid)
 
 ```
-
+## Create hyper_grid
 ```{r}
 for(i in 1:nrow(hyper_grid)) {
   
@@ -228,8 +223,7 @@ hyper_grid %>%
   dplyr::arrange(OOB_RMSE) %>%
   head(10)
 ```
-
-
+## Create ranger model
 ```{r}
 gc()
 
@@ -237,8 +231,9 @@ Final_RF <- ranger(
     formula         = user_suggestion~. , 
     data            = train.df, 
     num.trees       = 500,
-    mtry            = 20,
-    min.node.size   = 7,
+    mtry            = 10,
+    min.node.size   = 9,
+    sample.fraction = 0.800,
     seed            = 123
   )
 
@@ -247,7 +242,9 @@ print(Final_RF)
 
 
 ```{r}
-confusionMatrix(Final_RF$predictions, RF_model$y, mode = "everything", positive="1")
+t1$user_suggestion <- as.factor(t1$user_suggestion)
+
+confusionMatrix(Final_RF$predictions, t1$user_suggestion, mode = "everything", positive="1")
 ```
 ##Ouput
 ```{r}
@@ -259,7 +256,7 @@ predict_Final_RF$predictions
 
 ```{r}
 output= data.frame(review_id = game_test$review_id, user_suggestion = predict_Final_RF$predictions)
-write.csv(output, "predictions_1.csv", row.names = FALSE, quote = F)
+write.csv(output, "predictions_3.csv", row.names = FALSE, quote = F)
 ```
 
 ```{r}
@@ -281,7 +278,7 @@ print(Final_RF_2)
 ```{r}
 confusionMatrix(Final_RF_2$predicted, Final_RF_2$y, mode = "everything", positive="1")
 ```
-##Ouput
+## Output
 ```{r}
 predict_RF_2 = predict(Final_RF_2, newdata=test.df)
 ```
@@ -293,86 +290,58 @@ write.csv(output, "predictions_2.csv", row.names = FALSE, quote = F)
 ```
 
 
-
-
-
-
-
-
-##Build XGB model
+## SVM model
 ```{r}
-split = sample.split(tSparse$user_suggestion, SplitRatio = 0.7)
-trainSparse = subset(tSparse, split==TRUE)
-testSparse = subset(tSparse, split==FALSE)
+svm.1 <- svm(user_suggestion~., data = training_set, kernel='linear',cross = 3)
+svm.1
+```
 
-#using one hot encoding 
-labels <- trainSparse$user_suggestion
-ts_label <- testSparse$user_suggestion
-new_tr <- model.matrix(~.+0,data = trainSparse) 
-new_ts <- model.matrix(~.+0,data = testSparse)
+## Confusion Matrix
+```{r}
 
-#convert factor to numeric 
-labels <- as.numeric(labels)-1
-ts_label <- as.numeric(ts_label)-1
+test_set = rbind(training_set[1,],test_set)
+test_set = test_set[-1,]
 
-dtrain <- xgb.DMatrix(data = trainSparse,label = labels) 
-dtest <- xgb.DMatrix(data = testSparse,label=ts_label)
+.predictions.train <- predict(svm.1, newdata = test_set) 
+
+confusionMatrix(.predictions.train, train.df$user_suggestion, mode = "everything", positive="1")
+```
+```{r}
+.predictions.test <- predict(svm.1, newdata = test.df) 
+```
+
+## Neural Nets
+```{r}
+nnet.1 <- nnet(user_suggestion~., size=20, data=training_set, rang = 0.1, decay = 5e-4, maxit = 1000, trace=FALSE, MaxNWts = 180000)
+
+nnet.1
+```
+
+## CART
+```{r}
+tree.1 <- rpart(user_suggestion~., data = training_set)
+
+tree.1
 
 ```
 
-##Build Naive Bayer model
 ```{r}
-split = sample.split(t1$user_suggestion, SplitRatio = 0.7)
-train = subset(t1, split==TRUE)
-test = subset(t1, split==FALSE)
+.predictions.train <- predict(tree.1) 
 
-train$user_suggestion = as.factor(train$user_suggestion)
-test$user_suggestion = as.factor(test$user_suggestion)
+.predictions.train <- as.data.frame(.predictions.train)
 
-train_rec <- recipe(user_suggestion~. , data = t1)
+.predictions.train <- .predictions.train %>%
+  mutate( user_suggestion = if_else( `1` == 1 , 1, 0) )
 
-train_rec <- train_rec %>%
-  step_tokenize(user_review) %>%
-  step_stopwords(user_review) %>%
-  step_tokenfilter(user_review, max_tokens = 500) %>%
-  step_tfidf(user_review)
+#training_set$user_suggestion <- #as.factor(training_set$user_suggestion)
 
-nb_spec <- naive_Bayes() %>%
-  set_mode("classification") %>%
-  set_engine("naivebayes")
+.predictions.train$user_suggestion <- as.factor(.predictions.train$user_suggestion)
 
-nb_spec
+confusionMatrix(.predictions.train$user_suggestion, training_set$user_suggestion, mode = "everything", positive="1")
 
-nb_wf <- workflow() %>%
-  add_recipe(train_rec) %>%
-  add_model(nb_spec)
-nb_wf
-
-nb_wf %>%
-  fit(data = train)
 ```
 
-```{r}
-train_folds <- vfold_cv(data = train, strata = user_suggestion)
-train_folds
-```
-```{r}
-nb_cv <- nb_wf %>%
-  fit_resamples(
-    train_folds,
-    control = control_resamples(save_pred = TRUE)
-  )
 
-nb_cv_metrics <- collect_metrics(nb_cv)
-nb_cv_predictions <- collect_predictions(nb_cv)
 
-nb_cv_metrics
-```
-##Confusion Matrix
-```{r}
 
-nb_train_predict <- predict(nb_cv, test)
 
-cfm <- confusionMatrix(nb_train_predict, test$user_suggestion, mode = "everything", positive="1")
-
-```
